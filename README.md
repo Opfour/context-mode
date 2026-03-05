@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/07013dbf-07c0-4ef1-974a-33ea1207637b
 
 ## Platform Compatibility
 
-| Feature | Claude Code | Gemini CLI | VS Code Copilot | OpenCode | Codex CLI |
+| Feature | Claude Code | Gemini CLI <sup>(Beta)</sup> | VS Code Copilot <sup>(Beta)</sup> | OpenCode <sup>(Beta)</sup> | Codex CLI <sup>(Beta)</sup> |
 |---|:---:|:---:|:---:|:---:|:---:|
 | MCP Server | Yes | Yes | Yes | Yes | Yes |
 | PreToolUse Hook | Yes | Yes | Yes | Plugin | -- |
@@ -90,7 +90,7 @@ This gives you the 6 sandbox tools but without automatic routing. The model can 
 </details>
 
 <details>
-<summary><strong>Gemini CLI</strong></summary>
+<summary><strong>Gemini CLI</strong> <sup>(Beta)</sup></summary>
 
 **Step 1 — Install globally:**
 
@@ -146,7 +146,7 @@ Full hook config including PreCompress: [`configs/gemini-cli/settings.json`](con
 </details>
 
 <details>
-<summary><strong>VS Code Copilot</strong></summary>
+<summary><strong>VS Code Copilot</strong> <sup>(Beta)</sup></summary>
 
 **Step 1 — Install globally:**
 
@@ -193,7 +193,7 @@ Full hook config including PreCompact: [`configs/vscode-copilot/hooks.json`](con
 </details>
 
 <details>
-<summary><strong>OpenCode</strong></summary>
+<summary><strong>OpenCode</strong> <sup>(Beta)</sup></summary>
 
 **Step 1 — Install globally:**
 
@@ -227,7 +227,7 @@ The `mcp` entry gives you the 6 sandbox tools. The `plugin` entry enables hooks 
 </details>
 
 <details>
-<summary><strong>Codex CLI</strong></summary>
+<summary><strong>Codex CLI</strong> <sup>(Beta)</sup></summary>
 
 **Step 1 — Install globally:**
 
