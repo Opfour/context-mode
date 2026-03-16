@@ -272,9 +272,11 @@ This works alongside the plugin as a parallel enforcement layer — the plugin i
 
 context-mode runs as a native [OpenClaw](https://github.com/openclaw) gateway plugin, targeting **Pi Agent** sessions (Read/Write/Edit/Bash tools). Unlike other platforms, there's no separate MCP server — the plugin registers directly into the gateway runtime via OpenClaw's [plugin API](https://docs.openclaw.ai/tools/plugin).
 
-**Step 1 — Run the installer:**
+**Step 1 — Clone and install:**
 
 ```bash
+git clone https://github.com/mksglu/context-mode.git
+cd context-mode
 scripts/install-openclaw-plugin.sh /path/to/openclaw-state
 ```
 
@@ -282,7 +284,7 @@ Replace `/path/to/openclaw-state` with your `OPENCLAW_STATE_DIR` — the directo
 - **Docker:** `/openclaw` (the installer default)
 - **Local:** `~/.openclaw` or wherever you set `OPENCLAW_STATE_DIR`
 
-The installer builds the plugin, rebuilds `better-sqlite3` for your system Node, registers the extension in `runtime.json`, and restarts the gateway via SIGUSR1.
+The installer handles everything: `npm install`, `npm run build`, `better-sqlite3` native rebuild, extension registration in `runtime.json`, and gateway restart via SIGUSR1.
 
 **Step 2 — Verify.** Open a Pi Agent session. The plugin auto-injects `AGENTS.md` routing instructions and registers 8 hooks via [`api.on()`](https://docs.openclaw.ai/tools/plugin) (lifecycle) and [`api.registerHook()`](https://docs.openclaw.ai/tools/plugin) (commands). All tool interception, session tracking, and compaction recovery hooks activate automatically — no manual hook configuration needed.
 
