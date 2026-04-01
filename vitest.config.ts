@@ -4,11 +4,8 @@ export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
     testTimeout: 30_000,
-    // macOS CI has been intermittently crashing in worker_threads while loading
-    // the native better-sqlite3 path during npm test. Use forks on darwin
-    // (like Windows) to keep native-addon isolation stable.
-    pool: process.platform === "win32" || process.platform === "darwin"
-      ? "forks"
-      : "threads",
+    // Native addons (better-sqlite3) can segfault in worker_threads during
+    // process cleanup. Use forks on all platforms for stable isolation.
+    pool: "forks",
   },
 });
