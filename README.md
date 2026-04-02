@@ -599,18 +599,20 @@ Full configs: [`configs/kiro/mcp.json`](configs/kiro/mcp.json) | [`configs/kiro/
    npm run build
    ```
 
-2. Add to `~/.pi/agent/mcp.json` (or `.pi/mcp.json` for project-level) - edit your <HOME_USER> as tilde is not expanded inside JSON:
+2. Add to `~/.pi/agent/mcp.json` (or `.pi/mcp.json` for project-level):
 
    ```json
    {
      "mcpServers": {
        "context-mode": {
          "command": "node",
-         "args": ["<HOME_USER>/.pi/extensions/context-mode/node_modules/context-mode/start.mjs"]
+         "args": ["/home/youruser/.pi/extensions/context-mode/node_modules/context-mode/start.mjs"]
        }
      }
    }
    ```
+
+   > **Note:** JSON does not expand `~`. Replace `/home/youruser` with your actual home directory (run `echo $HOME` to find it).
 
 3. Restart Pi.
 
