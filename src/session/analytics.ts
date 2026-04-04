@@ -947,122 +947,156 @@ function kb(b: number): string {
 }
 
 /**
- * Render a FullReport as the same markdown output ctx_stats has always produced.
+ * Render a FullReport as a marketing-friendly, outcome-focused session story.
  *
- * Preserves the exact output format: Context Window Protection table,
- * TTL Cache section, Session Continuity table, and Analytics JSON block.
+ * Framework: Persona -> Metric -> Evidence -> Action -> ROI
+ * The output tells a narrative instead of dumping raw numbers.
  */
 export function formatReport(report: FullReport): string {
-  const lines: string[] = [
-    `## context-mode \u2014 Session Report (${report.session.uptime_min} min)`,
-  ];
+  const lines: string[] = [];
 
-  // ── Feature 1: Context Window Protection ──
-  lines.push("", `### Context Window Protection`, "");
+  // ── Hero: headline story ──
+  lines.push(`## Think in Code -- Session Report`);
 
   if (report.savings.total_calls === 0) {
     lines.push(
-      `No context-mode tool calls yet. Use \`batch_execute\`, \`execute\`, or \`fetch_and_index\` to keep raw output out of your context window.`,
+      "",
+      "No sandbox activity yet. Use ctx_execute or ctx_batch_execute to start saving context.",
+      "",
+      "---",
+      "_Display this entire report as-is in your response. Do NOT summarize, collapse, or paraphrase any section._",
     );
-  } else {
+    return lines.join("\n");
+  }
+
+  const totalProcessed =
+    report.savings.kept_out + (report.cache ? report.cache.bytes_saved : 0);
+  const totalReturned = report.savings.total_bytes_returned;
+  const grandTotal = totalProcessed + totalReturned;
+  const savingsPercent =
+    grandTotal > 0
+      ? ((1 - totalReturned / grandTotal) * 100).toFixed(1)
+      : "0.0";
+  // Rough estimate: 4 bytes per token, ~2 min reading time per 1000 tokens
+  const tokensSaved = Math.round(totalProcessed / 4);
+  const extraMinutes = Math.round((tokensSaved / 1000) * 2);
+
+  lines.push(
+    "",
+    `Your agent processed ${kb(totalProcessed)} of data.`,
+    `Only ${kb(totalReturned)} entered your context window.`,
+    "",
+    `**Context saved: ${savingsPercent}% -- session extended by ~${extraMinutes} minutes**`,
+  );
+
+  // ── What happened ──
+  lines.push("", "### What happened", "");
+
+  // Count per-tool categories
+  const toolCallMap = new Map<string, number>();
+  for (const t of report.savings.by_tool) {
+    toolCallMap.set(t.tool, t.calls);
+  }
+
+  const executeCount =
+    (toolCallMap.get("ctx_execute") ?? 0) +
+    (toolCallMap.get("ctx_execute_file") ?? 0);
+  const batchCount = toolCallMap.get("ctx_batch_execute") ?? 0;
+  const searchCount = toolCallMap.get("ctx_search") ?? 0;
+  const fetchCount = toolCallMap.get("ctx_fetch_and_index") ?? 0;
+  const fileCount = executeCount + batchCount;
+  const networkCount = fetchCount;
+  const cacheCount = report.cache ? report.cache.hits : 0;
+
+  if (fileCount > 0) {
     lines.push(
-      `| Metric | Value |`,
-      `|--------|------:|`,
-      `| Total data processed | **${kb(report.savings.total_processed)}** |`,
-      `| Kept in sandbox (never entered context) | **${kb(report.savings.kept_out)}** |`,
-      `| Entered context | ${kb(report.savings.total_bytes_returned)} |`,
-      `| Estimated tokens saved | ~${Math.round(report.savings.kept_out / 4).toLocaleString()} |`,
-      `| **Context savings** | **${report.savings.savings_ratio.toFixed(1)}x (${report.savings.pct}% reduction)** |`,
+      `-> ${fileCount} file${fileCount !== 1 ? "s" : ""} analyzed in sandbox (never entered context)`,
     );
+  }
+  if (networkCount > 0) {
+    lines.push(
+      `-> ${networkCount} API call${networkCount !== 1 ? "s" : ""} sandboxed (responses indexed, not dumped)`,
+    );
+  }
+  if (searchCount > 0) {
+    lines.push(
+      `-> ${searchCount} search quer${searchCount !== 1 ? "ies" : "y"} served from index`,
+    );
+  }
+  if (cacheCount > 0) {
+    lines.push(
+      `-> ${cacheCount} repeat fetch${cacheCount !== 1 ? "es" : ""} avoided (TTL cache)`,
+    );
+  }
 
-    // Per-tool breakdown
-    if (report.savings.by_tool.length > 0) {
+  // ── Per-tool breakdown ──
+  const activatedTools = report.savings.by_tool.filter((t) => t.calls > 0);
+  if (activatedTools.length > 0) {
+    lines.push(
+      "",
+      "### Per-tool breakdown",
+      "",
+      "| Tool | Calls | Data processed | Context used | Saved |",
+      "|------|------:|---------------:|-------------:|------:|",
+    );
+    for (const t of activatedTools) {
+      const processed = t.tokens * 4; // bytes approximation from tokens
+      const contextUsed = t.context_kb * 1024;
+      const savedPct =
+        processed > 0
+          ? (
+              ((processed - contextUsed) / processed) *
+              100
+            ).toFixed(0)
+          : "--";
       lines.push(
-        "",
-        `| Tool | Calls | Context | Tokens |`,
-        `|------|------:|--------:|-------:|`,
+        `| ${t.tool} | ${t.calls} | ${kb(processed)} | ${kb(contextUsed)} | ${savedPct}% |`,
       );
-      for (const t of report.savings.by_tool) {
-        lines.push(
-          `| ${t.tool} | ${t.calls} | ${kb(t.calls > 0 ? (t.tokens * 4) : 0)} | ~${t.tokens.toLocaleString()} |`,
-        );
-      }
-      lines.push(
-        `| **Total** | **${report.savings.total_calls}** | **${kb(report.savings.total_bytes_returned)}** | **~${Math.round(report.savings.total_bytes_returned / 4).toLocaleString()}** |`,
-      );
-    }
-
-    if (report.savings.kept_out > 0) {
-      lines.push(
-        "",
-        `Without context-mode, **${kb(report.savings.total_processed)}** of raw output would flood your context window. Instead, **${report.savings.pct}%** stayed in sandbox.`,
-      );
-    }
-
-    // Cache savings section
-    if (report.cache) {
-      lines.push(
-        "",
-        `### TTL Cache`,
-        "",
-        `| Metric | Value |`,
-        `|--------|------:|`,
-        `| Cache hits | **${report.cache.hits}** |`,
-        `| Data avoided by cache | **${kb(report.cache.bytes_saved)}** |`,
-        `| Network requests saved | **${report.cache.hits}** |`,
-        `| TTL remaining | **~${report.cache.ttl_hours_left}h** |`,
-        "",
-        `Content was already indexed in the knowledge base \u2014 ${report.cache.hits} fetch${report.cache.hits > 1 ? "es" : ""} skipped entirely. **${kb(report.cache.bytes_saved)}** of network I/O avoided. Search results served directly from local FTS5 index.`,
-      );
-
-      if (report.cache.total_savings_ratio > report.savings.savings_ratio) {
-        lines.push(
-          "",
-          `**Total context savings (sandbox + cache): ${report.cache.total_savings_ratio.toFixed(1)}x** \u2014 ${kb(report.cache.total_with_cache)} processed, only ${kb(report.savings.total_bytes_returned)} entered context.`,
-        );
-      }
     }
   }
 
-  // ── Session Continuity ──
+  // ── Session continuity ──
   if (report.continuity.total_events > 0) {
-    lines.push(
-      "",
-      "### Session Continuity",
-      "",
-      "| What's preserved | Count | I remember... | Why it matters |",
-      "|------------------|------:|---------------|----------------|",
-    );
-    for (const row of report.continuity.by_category) {
-      lines.push(
-        `| ${row.label} | ${row.count} | ${row.preview} | ${row.why} |`,
+    lines.push("", "### Session continuity", "");
+    const parts: string[] = [];
+    if (report.continuity.compact_count > 0) {
+      parts.push(
+        `${report.continuity.compact_count} compaction${report.continuity.compact_count !== 1 ? "s" : ""}`,
       );
     }
-    lines.push(
-      `| **Total** | **${report.continuity.total_events}** | | **Zero knowledge lost on compact** |`,
+    parts.push(
+      `${report.continuity.total_events} event${report.continuity.total_events !== 1 ? "s" : ""} preserved`,
     );
 
-    lines.push("");
+    // Count tasks from continuity categories
+    const taskRow = report.continuity.by_category.find(
+      (c) => c.category === "task" || c.category === "tasks",
+    );
+    if (taskRow && taskRow.count > 0) {
+      parts.push(
+        `${taskRow.count} task${taskRow.count !== 1 ? "s" : ""} tracked`,
+      );
+    }
+
+    lines.push(parts.join(" | "));
+
     if (report.continuity.compact_count > 0) {
       lines.push(
-        `Context has been compacted **${report.continuity.compact_count} time(s)** \u2014 session knowledge was preserved each time.`,
+        "",
+        `Session knowledge preserved across ${report.continuity.compact_count} compaction${report.continuity.compact_count !== 1 ? "s" : ""} -- zero context lost.`,
       );
     } else {
       lines.push(
-        `When your context compacts, all of this will restore Claude's awareness \u2014 no starting from scratch.`,
+        "",
+        "When your context compacts, all of this will restore awareness -- no starting from scratch.",
       );
     }
     if (report.continuity.resume_ready) {
-      lines.push(`Resume snapshot ready for the next compaction.`);
+      lines.push("Resume snapshot ready for the next compaction.");
     }
-
-    lines.push("");
-    lines.push(
-      `> **Note:** Previous session data is loaded when you start a new session. Without \`--continue\`, old session history is cleaned up to keep the database lean.`,
-    );
   }
 
-  // ── Analytics JSON ──
+  // ── Analytics JSON (for power users) ──
   const analyticsJson = {
     session: {
       duration_min: report.session.duration_min,
@@ -1105,10 +1139,12 @@ export function formatReport(report: FullReport): string {
     "```",
   );
 
-  // Formatting directive
+  // Footer
   lines.push(
     "",
     "---",
+    "context-mode -- github.com/mksglu/context-mode",
+    "",
     "_Display this entire report as-is in your response. Do NOT summarize, collapse, or paraphrase any section._",
   );
 

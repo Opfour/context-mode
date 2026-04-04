@@ -1442,3 +1442,37 @@ describe("Version outdated warning in trackResponse", () => {
     expect(serverSrc).toContain("npm run install:openclaw");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FS read instrumentation (mirrors network interceptor pattern)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("FS read instrumentation", () => {
+  const serverSrc = readFileSync(
+    resolve(__dirname, "../../src/server.ts"),
+    "utf-8",
+  );
+
+  test("wrapper contains __CM_FS__ marker for stderr reporting", () => {
+    expect(serverSrc).toContain("__CM_FS__:");
+  });
+
+  test("wrapper instruments readFileSync to count bytes", () => {
+    expect(serverSrc).toContain("readFileSync");
+    expect(serverSrc).toContain("__cm_fs+=");
+  });
+
+  test("wrapper instruments readFile (async) to count bytes", () => {
+    expect(serverSrc).toMatch(/readFile/);
+    expect(serverSrc).toContain("__cm_fs+=d.length");
+  });
+
+  test("parses __CM_FS__ from stderr and adds to bytesSandboxed", () => {
+    expect(serverSrc).toContain("__CM_FS__:(\\d+)");
+    expect(serverSrc).toContain("sessionStats.bytesSandboxed += parseInt(fsMatch[1])");
+  });
+
+  test("cleans __CM_FS__ marker from stderr output", () => {
+    expect(serverSrc).toContain('result.stderr.replace(/\\n?__CM_FS__:\\d+\\n?/g, "")');
+  });
+});
