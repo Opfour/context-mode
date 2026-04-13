@@ -576,7 +576,8 @@ describe("Concurrent Insert Resilience (#243)", () => {
 // ── Corrupt DB recovery (#244) ──
 
 describe("SessionDB — corrupt DB recovery", () => {
-  test("recovers from corrupt DB file by renaming and recreating", () => {
+  // Windows file locking prevents WAL/SHM deletion while another worker holds them open
+  test.skipIf(process.platform === "win32")("recovers from corrupt DB file by renaming and recreating", () => {
     const dbPath = join(tmpdir(), `corrupt-session-${Date.now()}.db`);
     // Write garbage to simulate corrupt DB
     writeFileSync(dbPath, "NOT A VALID SQLITE DATABASE");

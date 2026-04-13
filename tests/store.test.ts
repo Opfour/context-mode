@@ -1317,7 +1317,8 @@ describe("closeDB — WAL checkpoint", () => {
 // ── Corrupt DB recovery (#244) ──
 
 describe("ContentStore — corrupt DB recovery", () => {
-  test("recovers from corrupt DB file by deleting and recreating", () => {
+  // Windows file locking prevents WAL/SHM deletion while another worker holds them open
+  test.skipIf(process.platform === "win32")("recovers from corrupt DB file by deleting and recreating", () => {
     const dbPath = join(tmpdir(), `corrupt-store-${Date.now()}.db`);
     // Write garbage to simulate corrupt DB
     writeFileSync(dbPath, "THIS IS NOT A SQLITE DATABASE FILE");
