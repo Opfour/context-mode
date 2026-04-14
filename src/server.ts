@@ -583,7 +583,7 @@ server.registerTool(
           "Source code to execute. Use console.log (JS/TS), print (Python/Ruby/Perl/R), echo (Shell), echo (PHP), fmt.Println (Go), or IO.puts (Elixir) to output a summary to context.",
         ),
       timeout: z
-        .number()
+        .coerce.number()
         .optional()
         .default(30000)
         .describe("Max execution time in ms"),
@@ -917,7 +917,7 @@ server.registerTool(
           "Code to process FILE_CONTENT (file_content in Elixir). Print summary via console.log/print/echo/IO.puts.",
         ),
       timeout: z
-        .number()
+        .coerce.number()
         .optional()
         .default(30000)
         .describe("Max execution time in ms"),
@@ -1593,7 +1593,7 @@ server.registerTool(
           "This is your ONLY chance — put ALL your questions here. No follow-up calls needed.",
         )),
       timeout: z
-        .number()
+        .coerce.number()
         .optional()
         .default(60000)
         .describe("Max execution time in ms (default: 60s)"),
@@ -2094,7 +2094,7 @@ server.registerTool(
       "parallel work patterns, project focus, and actionable insights. " +
       "First run installs dependencies (~30s). Subsequent runs open instantly.",
     inputSchema: z.object({
-      port: z.number().optional().describe("Port to serve on (default: 4747)"),
+      port: z.coerce.number().optional().describe("Port to serve on (default: 4747)"),
     }),
   },
   async ({ port: userPort }) => {
