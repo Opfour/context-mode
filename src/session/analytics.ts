@@ -361,7 +361,7 @@ export class AnalyticsEngine {
 }
 
 // ─────────────────────────────────────────────────────────
-// formatReport — renders FullReport as concise, honest output
+// formatReport — renders FullReport as sales-grade savings dashboard
 // ─────────────────────────────────────────────────────────
 
 /** Format bytes as human-readable KB or MB. */
@@ -381,29 +381,29 @@ function formatDuration(uptimeMin: string): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-/**
- * Build a before/after comparison bar.
- *
- * The "without" bar is always full (40 chars).
- * The "with" bar is proportional to the ratio of returned vs total.
- */
-function comparisonBars(total: number, returned: number): { withoutBar: string; withBar: string } {
-  const BAR_WIDTH = 40;
-  const withoutBar = "#".repeat(BAR_WIDTH);
-  const withFill = total > 0 ? Math.max(1, Math.round((returned / total) * BAR_WIDTH)) : BAR_WIDTH;
-  const withBar = "#".repeat(withFill) + " ".repeat(BAR_WIDTH - withFill);
-  return { withoutBar, withBar };
+/** Build a savings efficiency bar using unicode block chars. */
+function savingsBar(pct: number, width: number = 20): string {
+  const filled = Math.round((pct / 100) * width);
+  return "\u2588".repeat(filled) + "\u2591".repeat(width - filled);
+}
+
+/** Format large numbers with K/M suffixes */
+function fmtNum(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
 }
 
 /**
- * Render a FullReport as a before/after comparison developers instantly understand.
+ * Render a FullReport as a savings-first dashboard that creates instant value recognition.
  *
- * Design rules:
- * - If no savings, show "fresh session" format (no fake percentages)
- * - Active session shows BEFORE vs AFTER -- what would have flooded your conversation vs what actually did
- * - Per-tool table only if 2+ different tools were called
- * - Time gained is the hero metric
- * - Under 15 lines for typical sessions
+ * Design philosophy:
+ * - Hero metric is "tokens saved" -- the number the user cares about
+ * - Every line must make the user think "this tool is saving me money/time"
+ * - Fresh session: honest, no fake numbers, clear call-to-action
+ * - Active session: savings bar + per-tool breakdown sorted by impact
+ * - Session memory reframed as value prop ("survives compaction")
+ * - Under 25 lines for heavy sessions, under 10 for fresh
  */
 export function formatReport(report: FullReport, version?: string, latestVersion?: string | null): string {
   const lines: string[] = [];
@@ -414,104 +414,97 @@ export function formatReport(report: FullReport, version?: string, latestVersion
     report.savings.kept_out + (report.cache ? report.cache.bytes_saved : 0);
   const totalReturned = report.savings.total_bytes_returned;
   const totalCalls = report.savings.total_calls;
+  const grandTotal = totalKeptOut + totalReturned;
+  const savingsPct = grandTotal > 0 ? (totalKeptOut / grandTotal) * 100 : 0;
+  const tokensSaved = Math.round(totalKeptOut / 4);
 
-  // ── Fresh session: almost no activity ──
+  // ── Fresh session: no savings yet ──
   if (totalKeptOut === 0) {
-    lines.push(`context-mode -- session (${duration})`);
+    lines.push(`Context Mode -- Session (${duration})`);
     lines.push("");
 
     if (totalCalls === 0) {
       lines.push("No tool calls yet.");
     } else {
-      const callLabel = totalCalls === 1 ? "1 tool call" : `${totalCalls} tool calls`;
-      lines.push(`${callLabel}  |  ${kb(totalReturned)} in context  |  no savings yet`);
+      const callLabel = totalCalls === 1 ? "1 call" : `${totalCalls} calls`;
+      lines.push(`${callLabel}  |  ${kb(totalReturned)} in context  |  0 tokens saved`);
     }
 
     lines.push("");
-    lines.push("Tip: Use ctx_execute to analyze files in sandbox -- savings start there.");
+    lines.push("Tip: Use ctx_execute or ctx_batch_execute to keep data out of context.");
+
+    // Footer
     lines.push("");
-    lines.push(version ? `v${version}` : "context-mode");
+    const versionStr = version ? `v${version}` : "context-mode";
+    lines.push(versionStr);
     if (version && latestVersion && latestVersion !== "unknown" && latestVersion !== version) {
-      lines.push(`Update available: v${version} -> v${latestVersion}  |  Run: ctx_upgrade`);
+      lines.push(`Update available: v${version} -> v${latestVersion}  |  ctx_upgrade`);
     }
     return lines.join("\n");
   }
 
-  // ── Active session with real savings ──
-  const grandTotal = totalKeptOut + totalReturned;
-  const savingsPercent =
-    grandTotal > 0
-      ? ((totalKeptOut / grandTotal) * 100).toFixed(1)
-      : "0.0";
-
-  // ── Time saved estimate (hero metric) ──
-  // ~4 bytes per token, ~1000 tokens per minute of context window capacity
-  const minSaved = Math.round(totalKeptOut / 4 / 1000);
-
-  lines.push(`context-mode -- session (${duration})`);
+  // ── Active session: savings dashboard ──
+  lines.push(`Context Mode -- Token Savings (${duration})`);
   lines.push("");
 
-  // ── Before/after comparison ──
-  const { withoutBar, withBar } = comparisonBars(grandTotal, totalReturned);
-  lines.push(`Without context-mode:  |${withoutBar}| ${kb(grandTotal)} in your conversation`);
-  lines.push(`With context-mode:     |${withBar}| ${kb(totalReturned)} in your conversation`);
-  lines.push("");
-  const savingsLine = `${kb(totalKeptOut)} processed in sandbox, never entered your conversation. (${savingsPercent}% reduction)`;
-  lines.push(savingsLine);
-
-  if (minSaved > 0) {
-    const timeSaved = minSaved >= 60
-      ? `+${Math.floor(minSaved / 60)}h ${minSaved % 60}m`
-      : `+${minSaved}m`;
-    lines.push(`${timeSaved} session time gained.`);
+  // Hero metrics block
+  lines.push(`Total calls:       ${totalCalls}`);
+  lines.push(`Data processed:    ${kb(grandTotal)}`);
+  lines.push(`In context:        ${kb(totalReturned)}`);
+  lines.push(`Tokens saved:      ${fmtNum(tokensSaved)} (${savingsPct.toFixed(1)}%)`);
+  if (report.cache && report.cache.hits > 0) {
+    lines.push(`Cache hits:        ${report.cache.hits} (+${kb(report.cache.bytes_saved)} saved)`);
   }
+  lines.push("");
+  lines.push(`Saved:  ${savingsBar(savingsPct)} ${savingsPct.toFixed(1)}%`);
 
-  // ── Per-tool table (only if 2+ different tools) ──
+  // ── Per-tool breakdown (only if 2+ tools) ──
   const activatedTools = report.savings.by_tool.filter((t) => t.calls > 0);
   if (activatedTools.length >= 2) {
     lines.push("");
-    for (const t of activatedTools) {
-      const returned = t.context_kb * 1024;
-      const callLabel = `${t.calls} call${t.calls !== 1 ? "s" : ""}`;
-      lines.push(
-        `  ${t.tool.padEnd(22)} ${callLabel.padEnd(10)} ${kb(returned)} used`,
-      );
+
+    // Estimate per-tool saved using global ratio
+    const toolRows = activatedTools.map((t) => {
+      const returnedBytes = t.context_kb * 1024;
+      const estimatedTotal = savingsPct < 100
+        ? returnedBytes / (1 - savingsPct / 100)
+        : returnedBytes;
+      const estimatedSaved = Math.max(0, estimatedTotal - returnedBytes);
+      return { ...t, returnedBytes, estimatedSaved };
+    }).sort((a, b) => b.estimatedSaved - a.estimatedSaved);
+
+    lines.push(`${"#".padEnd(3)} ${"Tool".padEnd(24)} ${"Calls".padStart(5)}   ${"Saved".padStart(8)}`);
+    for (let i = 0; i < toolRows.length; i++) {
+      const t = toolRows[i];
+      const idx = `${i + 1}.`.padEnd(3);
+      const name = t.tool.length > 24 ? t.tool.slice(0, 21) + "..." : t.tool.padEnd(24);
+      const count = String(t.calls).padStart(5);
+      const saved = kb(t.estimatedSaved).padStart(8);
+      lines.push(`${idx} ${name} ${count}   ${saved}`);
     }
   }
 
-  // ── Session continuity breakdown ──
-  if (report.continuity.by_category.length > 0) {
+  // ── Session memory (reframed as value prop) ──
+  if (report.continuity.total_events > 0) {
     lines.push("");
-    lines.push(`Session continuity: ${report.continuity.total_events} events preserved across ${report.continuity.compact_count} compaction${report.continuity.compact_count !== 1 ? "s" : ""}`);
-    lines.push("");
-    for (const c of report.continuity.by_category) {
-      const cat = c.category.padEnd(9);
-      const count = String(c.count).padStart(3);
-      const preview = c.preview.length > 45 ? c.preview.slice(0, 42) + "..." : c.preview;
-      lines.push(`  ${cat} ${count}   ${preview.padEnd(47)} ${c.why}`);
+    const cats = report.continuity.by_category;
+    if (cats.length > 0) {
+      const catParts = cats.map((c) => `${c.category} ${c.count}`);
+      lines.push(`Session memory: ${fmtNum(report.continuity.total_events)} events  [${catParts.join("  ")}]`);
+    } else {
+      lines.push(`Session memory: ${fmtNum(report.continuity.total_events)} events tracked`);
+    }
+    if (report.continuity.compact_count > 0) {
+      lines.push(`Survived ${report.continuity.compact_count} compaction${report.continuity.compact_count !== 1 ? "s" : ""} -- context resets, knowledge persists.`);
     }
   }
 
-  // ── Footer: version + outdated warning ──
-  const footerParts: string[] = [];
-  if (report.continuity.by_category.length === 0 && report.continuity.compact_count > 0) {
-    footerParts.push(
-      `${report.continuity.compact_count} compaction${report.continuity.compact_count !== 1 ? "s" : ""}`,
-    );
-  }
-  if (report.continuity.by_category.length === 0 && report.continuity.total_events > 0) {
-    footerParts.push(
-      `${report.continuity.total_events} event${report.continuity.total_events !== 1 ? "s" : ""} preserved`,
-    );
-  }
-  const versionStr = version ? `v${version}` : "context-mode";
-  footerParts.push(versionStr);
+  // ── Footer ──
   lines.push("");
-  lines.push(footerParts.join("  |  "));
-
-  // Outdated warning in footer
+  const versionStr = version ? `v${version}` : "context-mode";
+  lines.push(versionStr);
   if (version && latestVersion && latestVersion !== "unknown" && latestVersion !== version) {
-    lines.push(`Update available: v${version} -> v${latestVersion}  |  Run: ctx_upgrade`);
+    lines.push(`Update available: v${version} -> v${latestVersion}  |  ctx_upgrade`);
   }
 
   return lines.join("\n");

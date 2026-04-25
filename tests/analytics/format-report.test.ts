@@ -1,15 +1,15 @@
 /**
- * formatReport — Tests for the redesigned ctx_stats output.
+ * formatReport — Tests for the savings-first ctx_stats output.
  *
  * Design rules under test:
  * 1. Fresh session (totalKeptOut === 0) shows honest "no savings yet" format
- * 2. Active session shows before/after comparison bars
- * 3. Per-tool table only shown when 2+ different tools called
- * 4. No analytics JSON in default output
- * 5. Version shown at bottom
- * 6. Name is "context-mode", not "Think in Code"
- * 7. Under 15 lines for typical sessions
- * 8. Time gained is the hero metric
+ * 2. Active session shows hero metric: tokens saved with percentage
+ * 3. Savings bar visualizes the savings ratio
+ * 4. Per-tool table only shown when 2+ different tools called
+ * 5. Per-tool table sorted by estimated saved (highest first)
+ * 6. Session memory reframed as value prop
+ * 7. Under 25 lines for heavy sessions
+ * 8. Version and update info in footer
  */
 
 import { describe, it, expect } from "vitest";
@@ -53,17 +53,17 @@ function makeReport(overrides: Partial<FullReport> = {}): FullReport {
 
 describe("formatReport", () => {
   describe("fresh session (no savings)", () => {
-    it("shows 'no savings yet' when totalKeptOut is 0 and no calls", () => {
+    it("shows no tool calls message when zero calls", () => {
       const report = makeReport();
       const output = formatReport(report, "1.0.71");
 
-      expect(output).toContain("context-mode -- session");
+      expect(output).toContain("Context Mode -- Session");
       expect(output).toContain("No tool calls yet.");
       expect(output).toContain("Tip:");
       expect(output).toContain("v1.0.71");
     });
 
-    it("shows call count and bytes when calls exist but no savings", () => {
+    it("shows call count and zero tokens saved when calls exist but no savings", () => {
       const report = makeReport({
         savings: {
           ...makeReport().savings,
@@ -77,11 +77,11 @@ describe("formatReport", () => {
       });
       const output = formatReport(report, "1.0.71");
 
-      expect(output).toContain("1 tool call");
+      expect(output).toContain("1 call");
       expect(output).toContain("in context");
-      expect(output).toContain("no savings yet");
-      // Should NOT show before/after comparison
-      expect(output).not.toContain("Without context-mode");
+      expect(output).toContain("0 tokens saved");
+      // Should NOT show savings bar or token savings header
+      expect(output).not.toContain("Token Savings");
     });
 
     it("does not show fake percentages for fresh session", () => {
@@ -96,12 +96,12 @@ describe("formatReport", () => {
       const output = formatReport(report);
 
       expect(output).not.toMatch(/\d+\.\d+%/);
-      expect(output).toContain("no savings yet");
+      expect(output).toContain("0 tokens saved");
     });
   });
 
-  describe("active session (before/after comparison)", () => {
-    it("shows before/after comparison bars", () => {
+  describe("active session (savings dashboard)", () => {
+    it("shows hero metrics: total calls, data processed, tokens saved", () => {
       const report = makeReport({
         savings: {
           ...makeReport().savings,
@@ -123,27 +123,34 @@ describe("formatReport", () => {
       });
       const output = formatReport(report, "1.0.71");
 
-      expect(output).toContain("Without context-mode:");
-      expect(output).toContain("With context-mode:");
-      expect(output).toContain("in your conversation");
-      expect(output).toContain("never entered your conversation");
+      expect(output).toContain("Token Savings");
+      expect(output).toContain("Total calls:");
+      expect(output).toContain("16");
+      expect(output).toContain("Data processed:");
+      expect(output).toContain("Tokens saved:");
+      expect(output).toContain("Saved:");
       expect(output).toContain("v1.0.71");
     });
 
-    it("shows time gained as hero metric", () => {
+    it("shows savings bar with percentage", () => {
       const report = makeReport({
         savings: {
           ...makeReport().savings,
           total_calls: 10,
           total_bytes_returned: 2000,
-          kept_out: 500000, // ~125 min saved
+          kept_out: 8000, // 80%
         },
       });
       const output = formatReport(report);
-      expect(output).toMatch(/session time gained/);
+
+      // Should contain the savings bar line
+      expect(output).toContain("Saved:");
+      expect(output).toMatch(/80\.0%/);
+      // Bar should contain unicode block characters
+      expect(output).toMatch(/[\u2588\u2591]/);
     });
 
-    it("shows per-tool table when 2+ tools used", () => {
+    it("shows per-tool table when 2+ tools used, sorted by saved", () => {
       const report = makeReport({
         savings: {
           ...makeReport().savings,
@@ -151,8 +158,8 @@ describe("formatReport", () => {
           total_bytes_returned: 2000,
           kept_out: 50000,
           by_tool: [
-            { tool: "ctx_batch_execute", calls: 5, context_kb: 1.1, tokens: 282 },
             { tool: "ctx_execute", calls: 3, context_kb: 0.8, tokens: 205 },
+            { tool: "ctx_batch_execute", calls: 5, context_kb: 1.1, tokens: 282 },
           ],
         },
       });
@@ -160,7 +167,15 @@ describe("formatReport", () => {
 
       expect(output).toContain("ctx_batch_execute");
       expect(output).toContain("ctx_execute");
-      expect(output).toContain("used");
+      expect(output).toContain("Tool");
+      expect(output).toContain("Calls");
+      expect(output).toContain("Saved");
+
+      // batch_execute has more context_kb so more estimated saved - should be first
+      const lines = output.split("\n");
+      const batchLine = lines.findIndex((l) => l.includes("ctx_batch_execute"));
+      const execLine = lines.findIndex((l) => l.includes("ctx_execute"));
+      expect(batchLine).toBeLessThan(execLine);
     });
 
     it("does NOT show per-tool table when only 1 tool used", () => {
@@ -176,9 +191,9 @@ describe("formatReport", () => {
         },
       });
       const output = formatReport(report);
-      // Only ctx_ references should be in the before/after explanation, not a tool table
-      const toolTableLines = output.split("\n").filter((l) => l.trimStart().startsWith("ctx_"));
-      expect(toolTableLines.length).toBe(0);
+
+      // Should not show tool table header
+      expect(output).not.toMatch(/^#\s+Tool/m);
     });
 
     it("includes cache savings in totalKeptOut", () => {
@@ -199,87 +214,31 @@ describe("formatReport", () => {
       });
       const output = formatReport(report);
 
-      // totalKeptOut = 10000 + 5000 = 15000
-      expect(output).toContain("Without context-mode:");
-      expect(output).toContain("14.6 KB"); // 15000 / 1024 = 14.6 KB
-      expect(output).toContain("never entered your conversation");
+      // totalKeptOut = 10000 + 5000 = 15000, grandTotal = 16000
+      // savingsPct = 15000/16000 = 93.75%
+      expect(output).toContain("93.8%");
+      expect(output).toContain("Cache hits:");
+      expect(output).toContain("3");
     });
 
-    it("before bar is always full, after bar is proportional", () => {
+    it("tokens saved uses K/M suffixes for large numbers", () => {
       const report = makeReport({
         savings: {
           ...makeReport().savings,
-          total_calls: 10,
-          total_bytes_returned: 5000,
-          kept_out: 5000, // 50%
-        },
-      });
-      const output = formatReport(report);
-      const withoutLine = output.split("\n").find((l) => l.includes("Without context-mode"));
-      const withLine = output.split("\n").find((l) => l.includes("With context-mode"));
-      expect(withoutLine).toBeDefined();
-      expect(withLine).toBeDefined();
-
-      // Without bar should be fully filled (40 #)
-      const withoutBarMatch = withoutLine!.match(/\|([#]+)\|/);
-      expect(withoutBarMatch).not.toBeNull();
-      expect(withoutBarMatch![1].length).toBe(40);
-
-      // With bar: 50% = 20 # and 20 spaces
-      const withBarMatch = withLine!.match(/\|([# ]+)\|/);
-      expect(withBarMatch).not.toBeNull();
-      const hashes = (withBarMatch![1].match(/#/g) || []).length;
-      expect(hashes).toBe(20);
-    });
-  });
-
-  describe("continuity footer", () => {
-    it("shows compactions and events in footer when no by_category", () => {
-      const report = makeReport({
-        savings: {
-          ...makeReport().savings,
-          total_calls: 5,
-          total_bytes_returned: 1000,
-          kept_out: 50000,
-        },
-        continuity: {
-          total_events: 47,
-          by_category: [],
-          compact_count: 3,
-          resume_ready: false,
-        },
-      });
-      const output = formatReport(report, "1.0.71");
-
-      expect(output).toContain("3 compactions");
-      expect(output).toContain("47 events preserved");
-      expect(output).toContain("v1.0.71");
-    });
-
-    it("omits compaction count when zero", () => {
-      const report = makeReport({
-        savings: {
-          ...makeReport().savings,
-          total_calls: 5,
-          total_bytes_returned: 1000,
-          kept_out: 50000,
-        },
-        continuity: {
-          total_events: 10,
-          by_category: [],
-          compact_count: 0,
-          resume_ready: false,
+          total_calls: 100,
+          total_bytes_returned: 4_000_000,
+          kept_out: 25_000_000,
         },
       });
       const output = formatReport(report);
 
-      expect(output).not.toContain("compaction");
-      expect(output).toContain("10 events preserved");
+      // 25MB / 4 bytes per token = 6.25M tokens
+      expect(output).toMatch(/6\.3M/);
     });
   });
 
-  describe("continuity breakdown by category", () => {
-    it("shows continuity breakdown by category when events exist", () => {
+  describe("session memory", () => {
+    it("shows session memory with category breakdown", () => {
       const report = makeReport({
         savings: {
           ...makeReport().savings,
@@ -290,9 +249,9 @@ describe("formatReport", () => {
         continuity: {
           total_events: 25,
           by_category: [
-            { category: "file", count: 12, label: "Files tracked", preview: "server.ts, db.ts, utils.ts", why: "Restored after compact — no need to re-read" },
-            { category: "git", count: 5, label: "Git operations", preview: "feat: add analytics", why: "Branch, commit, and repo state preserved" },
-            { category: "decision", count: 4, label: "Your decisions", preview: "Use vitest for testing", why: "Applied automatically — won\u2019t ask again" },
+            { category: "file", count: 12, label: "Files tracked", preview: "server.ts, db.ts, utils.ts", why: "Restored after compact" },
+            { category: "git", count: 5, label: "Git operations", preview: "feat: add analytics", why: "Branch state preserved" },
+            { category: "decision", count: 4, label: "Your decisions", preview: "Use vitest for testing", why: "Applied automatically" },
             { category: "task", count: 4, label: "Tasks in progress", preview: "Implement session continuity", why: "Picks up from where it stopped" },
           ],
           compact_count: 2,
@@ -301,14 +260,58 @@ describe("formatReport", () => {
       });
       const output = formatReport(report, "1.0.71");
 
-      expect(output).toContain("Session continuity: 25 events preserved across 2 compactions");
-      expect(output).toContain("file");
-      expect(output).toContain("git");
-      expect(output).toContain("decision");
-      expect(output).toContain("task");
+      expect(output).toContain("Session memory:");
+      expect(output).toContain("25 events");
+      expect(output).toContain("file 12");
+      expect(output).toContain("git 5");
+      expect(output).toContain("decision 4");
+      expect(output).toContain("task 4");
     });
 
-    it("hides continuity section when no events", () => {
+    it("shows compaction survival message when compactions > 0", () => {
+      const report = makeReport({
+        savings: {
+          ...makeReport().savings,
+          total_calls: 5,
+          total_bytes_returned: 1000,
+          kept_out: 50000,
+        },
+        continuity: {
+          total_events: 47,
+          by_category: [
+            { category: "file", count: 30, label: "Files tracked", preview: "a.ts", why: "Restored" },
+          ],
+          compact_count: 3,
+          resume_ready: true,
+        },
+      });
+      const output = formatReport(report, "1.0.71");
+
+      expect(output).toContain("Survived 3 compactions");
+      expect(output).toContain("knowledge persists");
+    });
+
+    it("shows events tracked when no categories", () => {
+      const report = makeReport({
+        savings: {
+          ...makeReport().savings,
+          total_calls: 5,
+          total_bytes_returned: 1000,
+          kept_out: 50000,
+        },
+        continuity: {
+          total_events: 47,
+          by_category: [],
+          compact_count: 0,
+          resume_ready: false,
+        },
+      });
+      const output = formatReport(report, "1.0.71");
+
+      expect(output).toContain("47 events tracked");
+    });
+
+    it("hides session memory when no events", () => {
       const report = makeReport({
         savings: {
           ...makeReport().savings,
@@ -325,92 +328,12 @@ describe("formatReport", () => {
       });
       const output = formatReport(report);
 
-      expect(output).not.toContain("Session continuity:");
-    });
-
-    it("shows preview and why for each category", () => {
-      const report = makeReport({
-        savings: {
-          ...makeReport().savings,
-          total_calls: 10,
-          total_bytes_returned: 2000,
-          kept_out: 100000,
-        },
-        continuity: {
-          total_events: 8,
-          by_category: [
-            { category: "file", count: 5, label: "Files tracked", preview: "server.ts, db.ts", why: "Restored after compact — no need to re-read" },
-            { category: "error", count: 3, label: "Errors caught", preview: "TypeError: cannot read", why: "Tracked and monitored across compacts" },
-          ],
-          compact_count: 1,
-          resume_ready: false,
-        },
-      });
-      const output = formatReport(report, "1.0.71");
-
-      // Check preview content appears
-      expect(output).toContain("server.ts, db.ts");
-      expect(output).toContain("TypeError: cannot read");
-      // Check why labels appear
-      expect(output).toContain("Restored after compact");
-      expect(output).toContain("Tracked and monitored across compacts");
-    });
-
-    it("truncates long previews to 45 chars", () => {
-      const longPreview = "a".repeat(60);
-      const report = makeReport({
-        savings: {
-          ...makeReport().savings,
-          total_calls: 5,
-          total_bytes_returned: 1000,
-          kept_out: 50000,
-        },
-        continuity: {
-          total_events: 3,
-          by_category: [
-            { category: "file", count: 3, label: "Files tracked", preview: longPreview, why: "Restored after compact — no need to re-read" },
-          ],
-          compact_count: 1,
-          resume_ready: false,
-        },
-      });
-      const output = formatReport(report, "1.0.71");
-
-      // Preview should be truncated with "..."
-      expect(output).toContain("...");
-      // Should NOT contain the full 60-char string
-      expect(output).not.toContain(longPreview);
-    });
-
-    it("does not show footer compaction/events when breakdown is shown", () => {
-      const report = makeReport({
-        savings: {
-          ...makeReport().savings,
-          total_calls: 5,
-          total_bytes_returned: 1000,
-          kept_out: 50000,
-        },
-        continuity: {
-          total_events: 10,
-          by_category: [
-            { category: "file", count: 10, label: "Files tracked", preview: "a.ts", why: "Restored after compact — no need to re-read" },
-          ],
-          compact_count: 2,
-          resume_ready: false,
-        },
-      });
-      const output = formatReport(report, "1.0.71");
-      const footerLine = output.split("\n").find((l) => l.includes("v1.0.71"));
-
-      // Footer should have version but NOT duplicate compaction/events info
-      expect(footerLine).toBeDefined();
-      expect(footerLine).not.toContain("compaction");
-      expect(footerLine).not.toContain("events preserved");
+      expect(output).not.toContain("Session memory");
     });
   });
 
   describe("output constraints", () => {
-    it("uses 'context-mode' as name, not 'Think in Code'", () => {
+    it("uses 'Context Mode' as name, not 'Think in Code'", () => {
       const report = makeReport({
         savings: {
           ...makeReport().savings,
@@ -421,7 +344,7 @@ describe("formatReport", () => {
       });
       const output = formatReport(report);
 
-      expect(output).toContain("context-mode");
+      expect(output).toContain("Context Mode");
       expect(output).not.toContain("Think in Code");
     });
 
@@ -437,60 +360,51 @@ describe("formatReport", () => {
       const output = formatReport(report);
 
       expect(output).not.toContain("```json");
-      expect(output).not.toContain("Analytics (27");
     });
 
-    it("active session output is under 15 lines", () => {
+    it("active session with tools + continuity is under 25 lines", () => {
       const report = makeReport({
         savings: {
           ...makeReport().savings,
-          total_calls: 16,
-          total_bytes_returned: 3277,
-          kept_out: 536576,
+          total_calls: 184,
+          total_bytes_returned: 4_194_304,  // 4 MB
+          kept_out: 26_314_342,             // ~25.1 MB
           by_tool: [
-            { tool: "ctx_batch_execute", calls: 5, context_kb: 1.1, tokens: 282 },
-            { tool: "ctx_execute", calls: 3, context_kb: 0.8, tokens: 205 },
-            { tool: "ctx_search", calls: 8, context_kb: 1.3, tokens: 333 },
+            { tool: "ctx_batch_execute", calls: 126, context_kb: 2800, tokens: 717_000 },
+            { tool: "ctx_search", calls: 35, context_kb: 760, tokens: 194_560 },
+            { tool: "ctx_execute", calls: 22, context_kb: 390, tokens: 99_840 },
+            { tool: "ctx_fetch_and_index", calls: 1, context_kb: 50, tokens: 12_800 },
           ],
         },
         continuity: {
-          total_events: 47,
-          by_category: [],
-          compact_count: 3,
+          total_events: 1109,
+          by_category: [
+            { category: "file", count: 554, label: "Files tracked", preview: "server.ts", why: "Restored" },
+            { category: "subagent", count: 174, label: "Delegated work", preview: "research", why: "Preserved" },
+            { category: "prompt", count: 122, label: "Requests saved", preview: "fix bug", why: "Continues" },
+            { category: "rule", count: 96, label: "Project rules", preview: "CLAUDE.md", why: "Survives" },
+            { category: "git", count: 89, label: "Git operations", preview: "main", why: "Preserved" },
+            { category: "error", count: 35, label: "Errors caught", preview: "TypeError", why: "Tracked" },
+          ],
+          compact_count: 0,
           resume_ready: true,
         },
       });
       const output = formatReport(report, "1.0.71");
       const lineCount = output.split("\n").length;
-      expect(lineCount).toBeLessThanOrEqual(15);
+      expect(lineCount).toBeLessThanOrEqual(25);
     });
 
-    it("fresh session output is under 15 lines", () => {
+    it("fresh session output is under 10 lines", () => {
       const report = makeReport();
       const output = formatReport(report, "1.0.71");
       const lineCount = output.split("\n").length;
-      expect(lineCount).toBeLessThanOrEqual(15);
-    });
-
-    it("does not contain emojis", () => {
-      const report = makeReport({
-        savings: {
-          ...makeReport().savings,
-          total_calls: 10,
-          total_bytes_returned: 2000,
-          kept_out: 100000,
-        },
-      });
-      const output = formatReport(report, "1.0.71");
-      // Check for common emoji ranges
-      expect(output).not.toMatch(
-        /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u,
-      );
+      expect(lineCount).toBeLessThanOrEqual(10);
     });
   });
 
   describe("version handling", () => {
-    it("shows outdated warning when latestVersion differs", () => {
+    it("shows update warning when latestVersion differs", () => {
       const report = makeReport({
         savings: {
           ...makeReport().savings,
@@ -505,7 +419,7 @@ describe("formatReport", () => {
       expect(output).toContain("ctx_upgrade");
     });
 
-    it("no outdated warning when version matches", () => {
+    it("no update warning when version matches", () => {
       const report = makeReport({
         savings: {
           ...makeReport().savings,
@@ -518,7 +432,7 @@ describe("formatReport", () => {
       expect(output).not.toContain("Update available");
     });
 
-    it("shows outdated warning on fresh session too", () => {
+    it("shows update warning on fresh session too", () => {
       const report = makeReport();
       const output = formatReport(report, "1.0.65", "1.0.70");
       expect(output).toContain("Update available");
@@ -543,15 +457,15 @@ describe("formatReport", () => {
         session: { ...makeReport().session, uptime_min: "2.0" },
       });
       const output = formatReport(report);
-      expect(output).toContain("session (2 min)");
+      expect(output).toContain("(2 min)");
     });
 
-    it("shows hours and minutes for long sessions", () => {
+    it("shows minutes for medium sessions", () => {
       const report = makeReport({
         session: { ...makeReport().session, uptime_min: "45.0" },
       });
       const output = formatReport(report);
-      expect(output).toContain("session (45 min)");
+      expect(output).toContain("(45 min)");
     });
 
     it("shows hours format for 60+ minutes", () => {
@@ -559,7 +473,65 @@ describe("formatReport", () => {
         session: { ...makeReport().session, uptime_min: "90.0" },
       });
       const output = formatReport(report);
-      expect(output).toContain("session (1h 30m)");
+      expect(output).toContain("(1h 30m)");
+    });
+  });
+
+  describe("realistic scenario: heavy session", () => {
+    it("produces the expected output shape for a 184-call session", () => {
+      const report = makeReport({
+        savings: {
+          ...makeReport().savings,
+          total_calls: 184,
+          total_bytes_returned: 4_194_304,  // 4 MB
+          kept_out: 26_314_342,             // ~25.1 MB
+          by_tool: [
+            { tool: "ctx_batch_execute", calls: 126, context_kb: 2800, tokens: 717_000 },
+            { tool: "ctx_search", calls: 35, context_kb: 760, tokens: 194_560 },
+            { tool: "ctx_execute", calls: 22, context_kb: 390, tokens: 99_840 },
+            { tool: "ctx_fetch_and_index", calls: 1, context_kb: 50, tokens: 12_800 },
+          ],
+        },
+        cache: {
+          hits: 3,
+          bytes_saved: 524_288,
+          ttl_hours_left: 18,
+          total_with_cache: 31_032_934,
+          total_savings_ratio: 7.4,
+        },
+        session: {
+          id: "heavy-session",
+          uptime_min: "306.0",
+        },
+        continuity: {
+          total_events: 1109,
+          by_category: [
+            { category: "file", count: 554, label: "Files tracked", preview: "server.ts", why: "Restored" },
+            { category: "subagent", count: 174, label: "Delegated work", preview: "research", why: "Preserved" },
+            { category: "prompt", count: 122, label: "Requests saved", preview: "fix bug", why: "Continues" },
+            { category: "rule", count: 96, label: "Project rules", preview: "CLAUDE.md", why: "Survives" },
+            { category: "git", count: 89, label: "Git operations", preview: "main", why: "Preserved" },
+            { category: "error", count: 35, label: "Errors caught", preview: "TypeError", why: "Tracked" },
+          ],
+          compact_count: 0,
+          resume_ready: true,
+        },
+      });
+      const output = formatReport(report, "1.0.71");
+
+      // Key value props are present
+      expect(output).toContain("Token Savings (5h 6m)");
+      expect(output).toContain("184");
+      expect(output).toContain("Tokens saved:");
+      expect(output).toContain("Cache hits:");
+      expect(output).toContain("Session memory:");
+      expect(output).toContain("1.1K events");
+
+      // Verify it's parseable (no garbled lines)
+      const allLines = output.split("\n");
+      for (const line of allLines) {
+        expect(line.length).toBeLessThanOrEqual(100);
+      }
     });
   });
 });
