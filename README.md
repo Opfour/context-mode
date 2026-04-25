@@ -158,7 +158,11 @@ This gives you the 6 sandbox tools without automatic routing. The model can stil
 
 You should see `context-mode: ... - Connected`.
 
-**Routing:** Automatic. The SessionStart hook injects routing instructions at runtime — no `GEMINI.md` file is written to your project. All four hooks (BeforeTool, AfterTool, PreCompress, SessionStart) handle enforcement programmatically.
+**Routing:** Automatic via SessionStart hook. Optionally copy routing instructions for full model awareness:
+
+```bash
+cp node_modules/context-mode/configs/gemini-cli/GEMINI.md ./GEMINI.md
+```
 
 > **Why the BeforeTool matcher?** It targets only tools that produce large output (`run_shell_command`, `read_file`, `read_many_files`, `grep_search`, `search_file_content`, `web_fetch`, `activate_skill`) plus context-mode's own tools (`mcp__plugin_context-mode`). This avoids unnecessary hook overhead on lightweight tools while intercepting every tool that could flood your context window.
 
@@ -213,7 +217,11 @@ Full config reference: [`configs/gemini-cli/settings.json`](configs/gemini-cli/s
 
 **Verify:** Open Copilot Chat and type `ctx stats`. Context-mode tools should appear and respond.
 
-**Routing:** Automatic. The SessionStart hook injects routing instructions at runtime — no `copilot-instructions.md` file is written to your project.
+**Routing:** Automatic via SessionStart hook. Optionally copy routing instructions for full model awareness:
+
+```bash
+cp node_modules/context-mode/configs/vscode-copilot/copilot-instructions.md .github/copilot-instructions.md
+```
 
 Full hook config including PreCompact: [`configs/vscode-copilot/hooks.json`](configs/vscode-copilot/hooks.json)
 
@@ -258,7 +266,11 @@ Full hook config including PreCompact: [`configs/vscode-copilot/hooks.json`](con
 
 **Verify:** Open Copilot Chat and type `ctx stats`. Context-mode tools should appear and respond.
 
-**Routing:** Automatic. The SessionStart hook injects routing instructions at runtime — no instruction file is written to your project.
+**Routing:** Automatic via SessionStart hook. Optionally copy routing instructions for full model awareness:
+
+```bash
+cp node_modules/context-mode/configs/jetbrains-copilot/copilot-instructions.md .github/copilot-instructions.md
+```
 
 Full hook config including PreCompact: [`configs/jetbrains-copilot/hooks.json`](configs/jetbrains-copilot/hooks.json)
 
