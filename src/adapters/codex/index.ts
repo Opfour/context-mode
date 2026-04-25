@@ -231,7 +231,7 @@ export class CodexAdapter implements HookAdapter {
     return {
       PreToolUse: [
         {
-          matcher: "Bash|Shell",
+          matcher: "Bash|Shell|mcp__plugin_context-mode_context-mode__ctx_execute|mcp__plugin_context-mode_context-mode__ctx_execute_file|mcp__plugin_context-mode_context-mode__ctx_batch_execute",
           hooks: [
             {
               type: "command",
