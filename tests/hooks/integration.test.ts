@@ -9,7 +9,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } fr
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   mkdirSync,
   mkdtempSync,
@@ -590,7 +590,7 @@ describe("resolveConfigDir (#289)", () => {
     // Use a subprocess to isolate env var changes
     const code = `
       ${Object.entries(env).map(([k, v]) => `process.env[${JSON.stringify(k)}] = ${JSON.stringify(v)};`).join("\n")}
-      const { resolveConfigDir, GEMINI_OPTS, CODEX_OPTS, VSCODE_OPTS, CURSOR_OPTS, KIRO_OPTS } = await import(${JSON.stringify(HELPERS_PATH)});
+      const { resolveConfigDir, GEMINI_OPTS, CODEX_OPTS, VSCODE_OPTS, CURSOR_OPTS, KIRO_OPTS } = await import(${JSON.stringify(pathToFileURL(HELPERS_PATH).href)});
       const result = {
         claude_default: resolveConfigDir(),
         gemini_default: resolveConfigDir(GEMINI_OPTS),
@@ -664,7 +664,7 @@ describe("resolveConfigDir (#289)", () => {
         process.env.CLAUDE_CONFIG_DIR = ${JSON.stringify(customDir)};
         process.env.CLAUDE_PROJECT_DIR = "/test/project";
         process.env.CONTEXT_MODE_SESSION_SUFFIX = "";
-        const { getSessionDBPath } = await import(${JSON.stringify(HELPERS_PATH)});
+        const { getSessionDBPath } = await import(${JSON.stringify(pathToFileURL(HELPERS_PATH).href)});
         process.stdout.write(getSessionDBPath());
       `;
       const r = spawnSync("node", ["--input-type=module", "-e", code], {
@@ -691,7 +691,7 @@ describe("parseStdin (#322)", () => {
 
   function runParseTest(raw: string): { parsed: boolean; result: unknown; error?: string } {
     const code = `
-      const { parseStdin } = await import(${JSON.stringify(HELPERS_PATH)});
+      const { parseStdin } = await import(${JSON.stringify(pathToFileURL(HELPERS_PATH).href)});
       try {
         const result = parseStdin(${JSON.stringify(raw)});
         process.stdout.write(JSON.stringify({ parsed: true, result }));

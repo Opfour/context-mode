@@ -116,9 +116,33 @@ function seedFixtureDBs(baseDir: string): { sessionsDir: string; contentDir: str
   return { sessionsDir, contentDir };
 }
 
-async function waitForInsight(port: number): Promise<void> {
+async function waitForInsight(port: number, child: ChildProcess): Promise<void> {
+  // Wait for the server's stdout ready banner instead of blind HTTP polling.
+  // The server prints "http://localhost:{PORT}" when it's listening (server.mjs:853).
+  let stderr = "";
+  child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Insight server did not become ready within 15s. stderr: ${stderr || "(empty)"}`));
+    }, 15_000);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      if (chunk.toString().includes(`localhost:${port}`)) {
+        clearTimeout(timeout);
+        resolve();
+      }
+    });
+
+    child.on("exit", (code) => {
+      clearTimeout(timeout);
+      reject(new Error(`Insight server exited early with code ${code}. stderr: ${stderr || "(empty)"}`));
+    });
+  });
+
+  // Follow-up HTTP check to confirm the server is actually responding
   let lastError: string | undefined;
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 30; i++) {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api/overview`);
       if (res.ok) return;
@@ -128,10 +152,10 @@ async function waitForInsight(port: number): Promise<void> {
     }
     await new Promise((r) => setTimeout(r, 100));
   }
-  throw new Error(`Insight server did not become ready: ${lastError ?? "unknown error"}`);
+  throw new Error(`Insight server banner seen but HTTP not ready: ${lastError ?? "unknown"}`);
 }
 
-function startInsight(runtime: "node" | "bun" = "node"): { port: number } {
+function startInsight(runtime: "node" | "bun" = "node"): { port: number; child: ChildProcess } {
   const tempRoot = mkdtempSync(join(tmpdir(), "ctx-insight-cors-"));
   tempDirs.push(tempRoot);
 
@@ -154,13 +178,13 @@ function startInsight(runtime: "node" | "bun" = "node"): { port: number } {
     },
   });
   children.push(child);
-  return { port };
+  return { port, child };
 }
 
 describe("Insight API same-machine cross-origin policy", () => {
   test("does not advertise permissive CORS headers on sensitive session endpoints (Node)", async () => {
-    const { port } = startInsight("node");
-    await waitForInsight(port);
+    const { port, child } = startInsight("node");
+    await waitForInsight(port, child);
 
     const res = await fetch(`http://127.0.0.1:${port}/api/sessions/abcd1234/events/sess-1`, {
       headers: { Origin: "http://127.0.0.1:8081" },
@@ -174,8 +198,8 @@ describe("Insight API same-machine cross-origin policy", () => {
   });
 
   test("OPTIONS returns 405 instead of permissive preflight (Node)", async () => {
-    const { port } = startInsight("node");
-    await waitForInsight(port);
+    const { port, child } = startInsight("node");
+    await waitForInsight(port, child);
 
     const res = await fetch(`http://127.0.0.1:${port}/api/content/feedface/source/7`, {
       method: "OPTIONS",
@@ -194,8 +218,8 @@ describe("Insight API same-machine cross-origin policy", () => {
 
 describe.runIf(typeof Bun !== "undefined" || process.env.TEST_BUN_RUNTIME === "1")("Insight API CORS — Bun runtime", () => {
   test("does not advertise permissive CORS headers (Bun)", async () => {
-    const { port } = startInsight("bun");
-    await waitForInsight(port);
+    const { port, child } = startInsight("bun");
+    await waitForInsight(port, child);
 
     const res = await fetch(`http://127.0.0.1:${port}/api/sessions/abcd1234/events/sess-1`, {
       headers: { Origin: "http://127.0.0.1:8081" },
