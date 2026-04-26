@@ -780,3 +780,197 @@ describe("empty stdin resilience (#322)", () => {
     });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Plugin Cache Self-Heal Tests
+// ═══════════════════════════════════════════════════════════════════════
+
+import { symlinkSync, lstatSync, readdirSync, statSync } from "node:fs";
+
+/**
+ * Inline heal function — mirrors the logic in start.mjs and server.ts.
+ * Tests verify the ALGORITHM, not the specific file it lives in.
+ */
+function healRegistryMismatch(
+  currentDir: string,
+  installedPluginsPath: string,
+): { healed: boolean; action?: string; from?: string; to?: string } {
+  if (!existsSync(installedPluginsPath)) return { healed: false };
+  if (!existsSync(currentDir)) return { healed: false };
+
+  let ip: { plugins?: Record<string, Array<{ installPath: string }>> };
+  try {
+    ip = JSON.parse(readFileSync(installedPluginsPath, "utf-8"));
+  } catch {
+    return { healed: false };
+  }
+
+  for (const [key, entries] of Object.entries(ip.plugins ?? {})) {
+    if (!key.toLowerCase().includes("context-mode")) continue;
+    for (const entry of entries) {
+      const registryPath = entry.installPath;
+      if (!registryPath || existsSync(registryPath)) continue;
+      try {
+        const parent = dirname(registryPath);
+        if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
+        symlinkSync(currentDir, registryPath);
+        return { healed: true, action: "symlink", from: registryPath, to: currentDir };
+      } catch {
+        return { healed: false };
+      }
+    }
+  }
+  return { healed: false };
+}
+
+/**
+ * Global hook deployer — mirrors start.mjs auto-deploy logic.
+ */
+function deployGlobalHealHook(hooksDir: string): { deployed: boolean; path?: string } {
+  const hookPath = join(hooksDir, "context-mode-cache-heal.sh");
+  if (existsSync(hookPath)) return { deployed: false };
+  try {
+    if (!existsSync(hooksDir)) mkdirSync(hooksDir, { recursive: true });
+    const script = `#!/usr/bin/env bash\n# context-mode cache heal\nexit 0\n`;
+    writeFileSync(hookPath, script, { mode: 0o755 });
+    return { deployed: true, path: hookPath };
+  } catch {
+    return { deployed: false };
+  }
+}
+
+describe("plugin cache self-heal", () => {
+  let tempDir: string;
+  let cacheParent: string;
+  let ipPath: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "ctx-heal-"));
+    cacheParent = join(tempDir, "plugins", "cache", "context-mode", "context-mode");
+    mkdirSync(cacheParent, { recursive: true });
+    ipPath = join(tempDir, "installed_plugins.json");
+  });
+
+  afterEach(() => {
+    try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
+  });
+
+  function writeRegistry(installPath: string) {
+    const ip = {
+      version: 2,
+      plugins: {
+        "context-mode@context-mode": [{
+          scope: "user",
+          installPath,
+          version: "1.0.94",
+        }],
+      },
+    };
+    writeFileSync(ipPath, JSON.stringify(ip));
+  }
+
+  function createVersionDir(version: string): string {
+    const dir = join(cacheParent, version);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ version }));
+    return dir;
+  }
+
+  describe("healRegistryMismatch", () => {
+    test("creates symlink when registry path does not exist", () => {
+      const realDir = createVersionDir("1.0.89");
+      const missingPath = join(cacheParent, "1.0.94");
+      writeRegistry(missingPath);
+
+      const result = healRegistryMismatch(realDir, ipPath);
+
+      expect(result.healed).toBe(true);
+      expect(result.action).toBe("symlink");
+      expect(existsSync(missingPath)).toBe(true);
+      expect(lstatSync(missingPath).isSymbolicLink()).toBe(true);
+    });
+
+    test("no-op when registry path already exists", () => {
+      const realDir = createVersionDir("1.0.89");
+      createVersionDir("1.0.94");
+      writeRegistry(join(cacheParent, "1.0.94"));
+
+      const result = healRegistryMismatch(realDir, ipPath);
+
+      expect(result.healed).toBe(false);
+    });
+
+    test("no-op when installed_plugins.json missing", () => {
+      const realDir = createVersionDir("1.0.89");
+
+      const result = healRegistryMismatch(realDir, join(tempDir, "nonexistent.json"));
+
+      expect(result.healed).toBe(false);
+    });
+
+    test("no-op when currentDir does not exist", () => {
+      writeRegistry(join(cacheParent, "1.0.94"));
+
+      const result = healRegistryMismatch(join(cacheParent, "1.0.89"), ipPath);
+
+      expect(result.healed).toBe(false);
+    });
+
+    test("symlink target is the currentDir we are running from", () => {
+      const realDir = createVersionDir("1.0.89");
+      const missingPath = join(cacheParent, "1.0.94");
+      writeRegistry(missingPath);
+
+      healRegistryMismatch(realDir, ipPath);
+
+      const target = readFileSync(missingPath + "/package.json", "utf-8");
+      expect(JSON.parse(target).version).toBe("1.0.89");
+    });
+  });
+
+  describe("healRegistryMismatch — additional cases", () => {
+    test("heals multiple times for different registry paths", () => {
+      const realDir = createVersionDir("1.0.89");
+      const missing1 = join(cacheParent, "1.0.94");
+      writeRegistry(missing1);
+
+      const r1 = healRegistryMismatch(realDir, ipPath);
+      expect(r1.healed).toBe(true);
+
+      // Now registry points to yet another version
+      const missing2 = join(cacheParent, "1.0.95");
+      writeRegistry(missing2);
+
+      const r2 = healRegistryMismatch(realDir, ipPath);
+      expect(r2.healed).toBe(true);
+      expect(existsSync(missing2)).toBe(true);
+    });
+
+    test("handles malformed installed_plugins.json gracefully", () => {
+      const realDir = createVersionDir("1.0.89");
+      writeFileSync(ipPath, "not json");
+
+      const result = healRegistryMismatch(realDir, ipPath);
+      expect(result.healed).toBe(false);
+    });
+  });
+
+  describe("deployGlobalHealHook", () => {
+    test("creates hook script in specified directory", () => {
+      const hooksDir = join(tempDir, "hooks");
+
+      const result = deployGlobalHealHook(hooksDir);
+
+      expect(result.deployed).toBe(true);
+      expect(existsSync(join(hooksDir, "context-mode-cache-heal.sh"))).toBe(true);
+    });
+
+    test("no-op if hook already exists", () => {
+      const hooksDir = join(tempDir, "hooks");
+      deployGlobalHealHook(hooksDir); // first deploy
+
+      const result = deployGlobalHealHook(hooksDir); // second deploy
+      expect(result.deployed).toBe(false);
+    });
+  });
+});

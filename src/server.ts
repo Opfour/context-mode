@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
-import { existsSync, unlinkSync, readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync, cpSync, statSync } from "node:fs";
+import { existsSync, unlinkSync, readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync, cpSync, statSync, symlinkSync } from "node:fs";
 import { execSync, type ChildProcess } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -292,7 +292,37 @@ function shouldShowVersionWarning(): boolean {
   return true;
 }
 
+// ── Self-heal Layer 2: Mid-session registry heal (anthropics/claude-code#46915) ──
+// Runs once on first tool call. If Claude Code auto-updated the registry mid-session,
+// hooks break because CLAUDE_PLUGIN_ROOT points to a deleted directory. We create a
+// symlink from the broken path to our actual directory so hooks recover.
+let _cacheHealDone = false;
+function healCacheMidSession(): void {
+  if (_cacheHealDone) return;
+  _cacheHealDone = true;
+  try {
+    const ipPath = resolve(homedir(), ".claude", "plugins", "installed_plugins.json");
+    if (!existsSync(ipPath)) return;
+    const ip = JSON.parse(readFileSync(ipPath, "utf-8"));
+    for (const [key, entries] of Object.entries((ip.plugins ?? {}) as Record<string, Array<{ installPath?: string }>>)) {
+      if (!key.toLowerCase().includes("context-mode")) continue;
+      for (const entry of entries) {
+        const rp = entry.installPath;
+        if (!rp || existsSync(rp)) continue;
+        const parent = dirname(rp);
+        if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
+        const target = resolve(__pkg_dir, "..");
+        if (existsSync(target)) {
+          symlinkSync(target, rp, process.platform === "win32" ? "junction" : undefined);
+        }
+      }
+    }
+  } catch { /* best effort */ }
+}
+
 function trackResponse(toolName: string, response: ToolResult): ToolResult {
+  // Mid-session cache heal — one-shot, first tool call
+  healCacheMidSession();
   // Prepend version outdated warning if needed
   if (shouldShowVersionWarning() && response.content.length > 0) {
     const hint = getUpgradeHint();

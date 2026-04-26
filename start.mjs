@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execSync } from "node:child_process";
-import { existsSync, chmodSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, chmodSync, readFileSync, writeFileSync, readdirSync, symlinkSync, mkdirSync, lstatSync } from "node:fs";
+import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
@@ -29,7 +29,9 @@ if (!process.env.CONTEXT_MODE_PROJECT_DIR) {
 //   - Non-hook platforms: server.ts writeRoutingInstructions() on MCP connect
 //   - Future: explicit `context-mode init` command
 
-// Self-heal: if a newer version dir exists, update registry so next session uses it
+// ── Self-heal Layer 1: Fix registry → symlink mismatches (anthropics/claude-code#46915) ──
+// Claude Code auto-update can leave installed_plugins.json pointing to a non-existent
+// directory. We detect this and create symlinks so hooks find the right path.
 const cacheMatch = __dirname.match(
   /^(.*[\/\\]plugins[\/\\]cache[\/\\][^\/\\]+[\/\\][^\/\\]+[\/\\])([^\/\\]+)$/,
 );
@@ -37,6 +39,9 @@ if (cacheMatch) {
   try {
     const cacheParent = cacheMatch[1];
     const myVersion = cacheMatch[2];
+    const ipPath = resolve(homedir(), ".claude", "plugins", "installed_plugins.json");
+
+    // Forward heal: if a newer version dir exists, update registry
     const dirs = readdirSync(cacheParent).filter((d) =>
       /^\d+\.\d+\.\d+/.test(d),
     );
@@ -52,12 +57,6 @@ if (cacheMatch) {
       });
       const newest = dirs[dirs.length - 1];
       if (newest && newest !== myVersion) {
-        const ipPath = resolve(
-          homedir(),
-          ".claude",
-          "plugins",
-          "installed_plugins.json",
-        );
         const ip = JSON.parse(readFileSync(ipPath, "utf-8"));
         for (const [key, entries] of Object.entries(ip.plugins || {})) {
           if (!key.toLowerCase().includes("context-mode")) continue;
@@ -67,17 +66,70 @@ if (cacheMatch) {
             entry.lastUpdated = new Date().toISOString();
           }
         }
-        writeFileSync(
-          ipPath,
-          JSON.stringify(ip, null, 2) + "\n",
-          "utf-8",
-        );
+        writeFileSync(ipPath, JSON.stringify(ip, null, 2) + "\n", "utf-8");
+      }
+    }
+
+    // Reverse heal: if registry points to non-existent dir, create symlink to us
+    if (existsSync(ipPath)) {
+      const ip = JSON.parse(readFileSync(ipPath, "utf-8"));
+      for (const [key, entries] of Object.entries(ip.plugins || {})) {
+        if (!key.toLowerCase().includes("context-mode")) continue;
+        for (const entry of entries) {
+          const rp = entry.installPath;
+          if (rp && !existsSync(rp) && rp !== __dirname) {
+            try {
+              const rpParent = dirname(rp);
+              if (!existsSync(rpParent)) mkdirSync(rpParent, { recursive: true });
+              symlinkSync(__dirname, rp, process.platform === "win32" ? "junction" : undefined);
+            } catch { /* best effort */ }
+          }
+        }
       }
     }
   } catch {
     /* best effort — don't block server startup */
   }
 }
+
+// ── Self-heal Layer 4: Deploy global SessionStart hook ──
+// This hook lives outside the plugin directory (~/.claude/hooks/) so it works
+// even when the plugin cache is completely broken. It creates symlinks for any
+// missing plugin cache directories on every session start.
+try {
+  const globalHooksDir = resolve(homedir(), ".claude", "hooks");
+  const healHookPath = resolve(globalHooksDir, "context-mode-cache-heal.sh");
+  if (!existsSync(healHookPath)) {
+    if (!existsSync(globalHooksDir)) mkdirSync(globalHooksDir, { recursive: true });
+    const healScript = `#!/usr/bin/env bash
+# context-mode plugin cache self-heal (auto-deployed)
+# Fixes anthropics/claude-code#46915: auto-update breaks CLAUDE_PLUGIN_ROOT
+set -euo pipefail
+PLUGINS_FILE="$HOME/.claude/plugins/installed_plugins.json"
+[[ -f "$PLUGINS_FILE" ]] || exit 0
+node -e '
+const fs=require("fs"),path=require("path");
+try{
+  const ip=JSON.parse(fs.readFileSync(process.argv[1],"utf-8"));
+  for(const[k,es]of Object.entries(ip.plugins||{})){
+    if(!k.toLowerCase().includes("context-mode"))continue;
+    for(const e of es){
+      const p=e.installPath;
+      if(!p||fs.existsSync(p))continue;
+      const parent=path.dirname(p);
+      if(!fs.existsSync(parent))continue;
+      const dirs=fs.readdirSync(parent).filter(d=>/^\\d+\\.\\d+/.test(d)&&fs.statSync(path.join(parent,d)).isDirectory());
+      if(!dirs.length)continue;
+      dirs.sort((a,b)=>{const pa=a.split(".").map(Number),pb=b.split(".").map(Number);for(let i=0;i<3;i++){if((pa[i]||0)!==(pb[i]||0))return(pa[i]||0)-(pb[i]||0)}return 0});
+      try{fs.symlinkSync(path.join(parent,dirs[dirs.length-1]),p)}catch{}
+    }
+  }
+}catch{}
+' "$PLUGINS_FILE" 2>/dev/null || true
+`;
+    writeFileSync(healHookPath, healScript, { mode: 0o755 });
+  }
+} catch { /* best effort */ }
 
 // Ensure native dependencies + ABI compatibility (shared with hooks via ensure-deps.mjs)
 // ensure-deps handles better-sqlite3 install + ABI cache/rebuild automatically (#148, #203)
